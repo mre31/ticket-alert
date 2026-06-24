@@ -134,11 +134,12 @@ def run_once():
     # Define active targets from configurations
     targets = []
     
-    if Config.PARIBU_URL:
+    if Config.MONITOR_PARIBU and Config.PARIBU_URL:
         targets.append({
             "key": "paribu",
             "name": "Paribu Cineverse",
             "url": Config.PARIBU_URL,
+            "alert_on_down": Config.ALERT_ON_PARIBU_DOWN,
             "check_fn": check_paribu,
             "on_sale_message": (
                 "<b>Paribu Cineverse Biletleri Satışta!</b>\n\n"
@@ -147,12 +148,13 @@ def run_once():
             )
         })
         
-    if Config.BILETINIAL_URL:
+    if Config.MONITOR_BILETINIAL and Config.BILETINIAL_URL:
         keywords = Config.get_biletinial_keywords()
         targets.append({
             "key": "biletinial",
             "name": "Biletinial",
             "url": Config.BILETINIAL_URL,
+            "alert_on_down": Config.ALERT_ON_BILETINIAL_DOWN,
             "check_fn": lambda html: check_biletinial(html, keywords),
             "on_sale_message": (
                 "<b>Biletinial Bildirimi!</b>\n\n"
@@ -177,36 +179,43 @@ def run_once():
         html, fetch_error = normalize_fetch_result(fetch_result)
         if html is None:
             logger.warning(f"Could not retrieve website HTML for {target['name']}. Skipping.")
-            if not previous_unreachable:
-                error_message = (
-                    "<b>Siteye erişilemiyor!</b>\n\n"
-                    f"{target['name']} kontrol edilemedi.\n"
-                    f"URL: <a href='{target['url']}'>{target['url']}</a>\n"
-                    f"Hata: {fetch_error}"
-                )
-                notified = Notifier.notify(Config, error_message, click_url=target["url"])
-                if notified:
-                    logger.info(f"Reachability alert sent for {target['name']}. Updating state.")
-                    save_state(target["key"], site_unreachable=True, last_error=fetch_error)
+            if target["alert_on_down"]:
+                if not previous_unreachable:
+                    error_message = (
+                        "<b>Siteye erişilemiyor!</b>\n\n"
+                        f"{target['name']} kontrol edilemedi.\n"
+                        f"URL: <a href='{target['url']}'>{target['url']}</a>\n"
+                        f"Hata: {fetch_error}"
+                    )
+                    notified = Notifier.notify(Config, error_message, click_url=target["url"])
+                    if notified:
+                        logger.info(f"Reachability alert sent for {target['name']}. Updating state.")
+                        save_state(target["key"], site_unreachable=True, last_error=fetch_error)
+                    else:
+                        logger.error(f"Failed to send reachability alert for {target['name']}. Will retry next time.")
                 else:
-                    logger.error(f"Failed to send reachability alert for {target['name']}. Will retry next time.")
+                    logger.info(f"[{target['name']}] Website is still unreachable. Alert already sent previously.")
             else:
-                logger.info(f"[{target['name']}] Website is still unreachable. Alert already sent previously.")
+                logger.info(f"[{target['name']}] Website is unreachable, but alerts are disabled for this target. Skipping alert.")
             continue
 
         if previous_unreachable:
-            logger.info(f"[{target['name']}] Website is reachable again. Sending recovery notification.")
-            recovery_message = (
-                "<b>Site tekrar erişilebilir!</b>\n\n"
-                f"{target['name']} yeniden kontrol edilebiliyor.\n"
-                f"URL: <a href='{target['url']}'>{target['url']}</a>"
-            )
-            notified = Notifier.notify(Config, recovery_message, click_url=target["url"])
-            if notified:
-                logger.info(f"Recovery alert sent for {target['name']}. Resetting reachability state.")
-                save_state(target["key"], site_unreachable=False)
+            if target["alert_on_down"]:
+                logger.info(f"[{target['name']}] Website is reachable again. Sending recovery notification.")
+                recovery_message = (
+                    "<b>Site tekrar erişilebilir!</b>\n\n"
+                    f"{target['name']} yeniden kontrol edilebiliyor.\n"
+                    f"URL: <a href='{target['url']}'>{target['url']}</a>"
+                )
+                notified = Notifier.notify(Config, recovery_message, click_url=target["url"])
+                if notified:
+                    logger.info(f"Recovery alert sent for {target['name']}. Resetting reachability state.")
+                    save_state(target["key"], site_unreachable=False)
+                else:
+                    logger.error(f"Failed to send recovery alert for {target['name']}. Will retry next time.")
             else:
-                logger.error(f"Failed to send recovery alert for {target['name']}. Will retry next time.")
+                logger.info(f"[{target['name']}] Website is reachable again. Resetting reachability state.")
+                save_state(target["key"], site_unreachable=False)
 
         tickets_available = target["check_fn"](html)
         
@@ -228,6 +237,8 @@ def run_once():
             else:
                 logger.info(f"[{target['name']}] Tickets are not on sale yet.")
                 save_state(target["key"], tickets_on_sale=False)
+
+
 
 def main():
     # Validate configuration

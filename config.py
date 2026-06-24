@@ -5,17 +5,27 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Config:
+    # Target enablement flags (default to True)
+    MONITOR_PARIBU = os.getenv("MONITOR_PARIBU", "true").lower() in ("true", "1", "yes")
+    MONITOR_BILETINIAL = os.getenv("MONITOR_BILETINIAL", "true").lower() in ("true", "1", "yes")
+
+    # Down alert configurations (whether to notify when a site check fails)
+    ALERT_ON_PARIBU_DOWN = os.getenv("ALERT_ON_PARIBU_DOWN", "true").lower() in ("true", "1", "yes")
+    ALERT_ON_BILETINIAL_DOWN = os.getenv("ALERT_ON_BILETINIAL_DOWN", "true").lower() in ("true", "1", "yes")
+
     # 1. Paribu Cineverse Configuration
-    PARIBU_URL = os.getenv(
-        "PARIBU_URL", 
-        "https://www.paribucineverse.com/fantastik-filmleri/orumcek-adam-yepyeni-bir-gun-filmi-izle"
-    )
+    PARIBU_URL = os.getenv("PARIBU_URL")
+    if PARIBU_URL is not None:
+        PARIBU_URL = PARIBU_URL.strip()
+    else:
+        PARIBU_URL = "https://www.paribucineverse.com/fantastik-filmleri/orumcek-adam-yepyeni-bir-gun-filmi-izle"
     
     # 2. Biletinial Configuration
-    BILETINIAL_URL = os.getenv(
-        "BILETINIAL_URL",
-        "https://biletinial.com/tr-tr/sinema"
-    )
+    BILETINIAL_URL = os.getenv("BILETINIAL_URL")
+    if BILETINIAL_URL is not None:
+        BILETINIAL_URL = BILETINIAL_URL.strip()
+    else:
+        BILETINIAL_URL = "https://biletinial.com/tr-tr/sinema"
     
     # Biletinial keywords to search, comma separated
     BILETINIAL_KEYWORDS_RAW = os.getenv(
@@ -51,8 +61,10 @@ class Config:
     def validate(cls):
         """Validates that the configuration has at least one valid notification channel."""
         errors = []
-        if not cls.PARIBU_URL and not cls.BILETINIAL_URL:
-            errors.append("At least one monitoring URL must be configured (PARIBU_URL or BILETINIAL_URL).")
+        has_paribu = bool(cls.MONITOR_PARIBU and cls.PARIBU_URL)
+        has_biletinial = bool(cls.MONITOR_BILETINIAL and cls.BILETINIAL_URL)
+        if not has_paribu and not has_biletinial:
+            errors.append("At least one active monitoring target/URL must be configured.")
             
         has_telegram = bool(cls.TELEGRAM_BOT_TOKEN and cls.TELEGRAM_CHAT_ID)
         has_ntfy = bool(cls.NTFY_TOPIC)
@@ -61,3 +73,5 @@ class Config:
             errors.append("You must configure at least one notification channel (Telegram or ntfy).")
             
         return len(errors) == 0, errors
+
+

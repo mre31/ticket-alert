@@ -19,13 +19,20 @@ def main():
     print(f"Telegram Bot Token configured: {bool(Config.TELEGRAM_BOT_TOKEN)}")
     
     message = (
-        "<b>[TEST] Bilet Alarmı Deneme Bildirimi</b>\n\n"
         "Eğer bu bildirimi görüyorsanız bilet takip sisteminiz "
         "başarıyla bildirim gönderiyor demektir!"
     )
     
     print("\nSending test notification...")
-    success = Notifier.notify(Config, message, click_url=Config.PARIBU_URL)
+    success = Notifier.notify(
+        Config, 
+        message, 
+        click_url=Config.PARIBU_URL,
+        title="[TEST] Bilet Alarmı Sistem Kontrolü",
+        priority="3",
+        tags="white_check_mark,test"
+    )
+
     
     if success:
         print("\nSUCCESS: Test notification sent successfully!")

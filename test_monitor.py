@@ -29,11 +29,19 @@ class TestTicketMonitor(unittest.TestCase):
                 pass
             
     def tearDown(self):
+        Config.MONITOR_PARIBU = True
+        Config.MONITOR_BILETINIAL = True
+        Config.PARIBU_URL = "https://www.paribucineverse.com/fantastik-filmleri/orumcek-adam-yepyeni-bir-gun-filmi-izle"
+        Config.BILETINIAL_URL = "https://biletinial.com/tr-tr/sinema"
+        Config.PARIBU_HEALTH_CHECK_URL = "https://www.paribucineverse.com"
+        Config.BILETINIAL_HEALTH_CHECK_URL = "https://biletinial.com"
+        Config.HEALTH_CHECK_URL = None
         if os.path.exists("test_state.json"):
             try:
                 os.remove("test_state.json")
             except OSError:
                 pass
+
 
     def test_check_paribu_positive(self):
         html_valid = (
@@ -168,6 +176,95 @@ class TestTicketMonitor(unittest.TestCase):
             self.assertNotIn("last_error", state)
         finally:
             Config.BILETINIAL_URL = original_biletinial_url
+
+    @patch("monitor.fetch_page")
+    @patch("notifier.Notifier.notify")
+    def test_run_once_with_disabled_alert_on_down(self, mock_notify, mock_fetch):
+        # Configure Biletinial alert_on_down to False
+        Config.ALERT_ON_BILETINIAL_DOWN = False
+        Config.MONITOR_PARIBU = False
+        Config.MONITOR_BILETINIAL = True
+        
+        # Simulate fetch failure
+        mock_fetch.return_value = None
+        
+        run_once()
+        
+        # Verify no reachability notifications were sent
+        mock_notify.assert_not_called()
+
+    @patch("monitor.fetch_page")
+    @patch("notifier.Notifier.notify")
+    def test_run_once_with_enabled_alert_on_down(self, mock_notify, mock_fetch):
+        # Configure Biletinial alert_on_down to True
+        Config.ALERT_ON_BILETINIAL_DOWN = True
+        Config.MONITOR_PARIBU = False
+        Config.MONITOR_BILETINIAL = True
+        
+        # Simulate fetch failure
+        mock_fetch.return_value = None
+        mock_notify.return_value = True
+        
+        run_once()
+        
+        # Verify reachability notification was sent
+        mock_notify.assert_called_once()
+        self.assertTrue(load_state()["biletinial"]["site_unreachable"])
+
+    def test_target_enablement_logic(self):
+        # Test Paribu only enabled
+        Config.MONITOR_PARIBU = True
+        Config.MONITOR_BILETINIAL = False
+        Config.PARIBU_URL = "https://paribu.com"
+        Config.BILETINIAL_URL = "https://biletinial.com"
+        
+        # Mock load_state and fetch_page to see which targets are checked
+        with patch("monitor.fetch_page") as mock_fetch, \
+             patch("monitor.load_state") as mock_load:
+            mock_load.return_value = {}
+            mock_fetch.return_value = "<html></html>"
+            
+            run_once()
+            
+            # Should only fetch Paribu URL
+            mock_fetch.assert_called_once_with("https://paribu.com")
+
+    @patch("requests.post")
+    def test_notifier_dynamic_parameters(self, mock_post):
+        # Configure both notification channels
+        Config.TELEGRAM_BOT_TOKEN = "test_token"
+        Config.TELEGRAM_CHAT_ID = "test_chat"
+        Config.NTFY_TOPIC = "test_topic"
+        Config.NTFY_SERVER = "https://ntfy.example.com"
+        
+        mock_post.return_value.status_code = 200
+        
+        success = Notifier.notify(
+            Config,
+            message="Test message",
+            click_url="https://example.com/click",
+            title="Custom Title",
+            priority="2",
+            tags="bell,test"
+        )
+        
+        self.assertTrue(success)
+        # Check that post was called twice: once for Telegram, once for ntfy
+        self.assertEqual(mock_post.call_count, 2)
+        
+        # Verify ntfy post headers and payload
+        ntfy_call = [call for call in mock_post.call_args_list if "ntfy.example.com" in call[0][0]][0]
+        headers = ntfy_call[1]["headers"]
+        from email.header import Header
+        self.assertEqual(headers["Title"], Header("Custom Title", 'utf-8').encode())
+        self.assertEqual(headers["Priority"], "2")
+        self.assertEqual(headers["Tags"], "bell,test")
+        
+        # Verify Telegram post payload (includes prepended title in HTML)
+        telegram_call = [call for call in mock_post.call_args_list if "api.telegram.org" in call[0][0]][0]
+        json_data = telegram_call[1]["json"]
+        self.assertIn("<b>Custom Title</b>", json_data["text"])
+        self.assertIn("Test message", json_data["text"])
 
     def test_live_supergirl_integration(self):
         """Integration test fetching the real Supergirl page and verifying tickets are on sale."""
