@@ -140,6 +140,35 @@ class TestTicketMonitor(unittest.TestCase):
         self.assertTrue(load_state()["paribu"]["tickets_on_sale"])
         self.assertTrue(load_state()["biletinial"]["tickets_on_sale"])
 
+    @patch("monitor.fetch_page")
+    @patch("notifier.Notifier.notify")
+    def test_run_once_notifies_when_target_unreachable_once(self, mock_notify, mock_fetch):
+        mock_notify.return_value = True
+        original_biletinial_url = Config.BILETINIAL_URL
+        Config.BILETINIAL_URL = ""
+
+        try:
+            mock_fetch.return_value = (None, "Connection timed out")
+
+            run_once()
+            mock_notify.assert_called_once()
+            state = load_state()["paribu"]
+            self.assertTrue(state["site_unreachable"])
+            self.assertEqual(state["last_error"], "Connection timed out")
+
+            run_once()
+            mock_notify.assert_called_once()
+
+            mock_fetch.return_value = "<html><body>Biletler yakında.</body></html>"
+            run_once()
+            state = load_state()["paribu"]
+            self.assertEqual(mock_notify.call_count, 2)
+            self.assertFalse(state["site_unreachable"])
+            self.assertFalse(state["tickets_on_sale"])
+            self.assertNotIn("last_error", state)
+        finally:
+            Config.BILETINIAL_URL = original_biletinial_url
+
     def test_live_supergirl_integration(self):
         """Integration test fetching the real Supergirl page and verifying tickets are on sale."""
         url = "https://www.paribucineverse.com/fantastik-filmleri/supergirl-filmi-izle"

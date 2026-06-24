@@ -39,14 +39,27 @@ def load_state():
             logger.warning(f"Could not read state file: {e}. Starting fresh.")
     return {}
 
-def save_state(target_key, tickets_on_sale):
+def save_state(target_key, tickets_on_sale=None, site_unreachable=None, last_error=None):
     """Saves the status of a specific target to the state file."""
     state = load_state()
-    state[target_key] = {
-        "tickets_on_sale": tickets_on_sale,
-        "last_checked": datetime.now().isoformat()
-    }
+    target_state = state.get(target_key, {})
+
+    if tickets_on_sale is not None:
+        target_state["tickets_on_sale"] = tickets_on_sale
+    if site_unreachable is not None:
+        target_state["site_unreachable"] = site_unreachable
+        if site_unreachable is False:
+            target_state.pop("last_error", None)
+    if last_error is not None:
+        target_state["last_error"] = last_error
+
+    target_state["last_checked"] = datetime.now().isoformat()
+    state[target_key] = target_state
+
     try:
+        state_dir = os.path.dirname(Config.STATE_FILE_PATH)
+        if state_dir:
+            os.makedirs(state_dir, exist_ok=True)
         with open(Config.STATE_FILE_PATH, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=4)
     except Exception as e:
@@ -103,10 +116,18 @@ def fetch_page(url):
     try:
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
-        return response.text
+        return response.text, None
     except Exception as e:
         logger.error(f"Failed to fetch page at {url}: {e}")
-        return None
+        return None, str(e)
+
+def normalize_fetch_result(fetch_result):
+    """Supports both the current (html, error) result and older test mocks returning html/None."""
+    if isinstance(fetch_result, tuple):
+        return fetch_result
+    if fetch_result is None:
+        return None, "Website could not be fetched."
+    return fetch_result, None
 
 def run_once():
     """Runs a single check loop across all configured targets."""
@@ -148,16 +169,46 @@ def run_once():
     
     for target in targets:
         logger.info(f"Checking target [{target['name']}] at URL: {target['url']}")
-        html = fetch_page(target["url"])
-        if html is None:
-            logger.warning(f"Could not retrieve website HTML for {target['name']}. Skipping.")
-            continue
-            
-        tickets_available = target["check_fn"](html)
-        
-        # Get previous state for this target
         target_state = all_states.get(target["key"], {})
         previous_status = target_state.get("tickets_on_sale", False)
+        previous_unreachable = target_state.get("site_unreachable", False)
+
+        fetch_result = fetch_page(target["url"])
+        html, fetch_error = normalize_fetch_result(fetch_result)
+        if html is None:
+            logger.warning(f"Could not retrieve website HTML for {target['name']}. Skipping.")
+            if not previous_unreachable:
+                error_message = (
+                    "<b>Siteye erişilemiyor!</b>\n\n"
+                    f"{target['name']} kontrol edilemedi.\n"
+                    f"URL: <a href='{target['url']}'>{target['url']}</a>\n"
+                    f"Hata: {fetch_error}"
+                )
+                notified = Notifier.notify(Config, error_message, click_url=target["url"])
+                if notified:
+                    logger.info(f"Reachability alert sent for {target['name']}. Updating state.")
+                    save_state(target["key"], site_unreachable=True, last_error=fetch_error)
+                else:
+                    logger.error(f"Failed to send reachability alert for {target['name']}. Will retry next time.")
+            else:
+                logger.info(f"[{target['name']}] Website is still unreachable. Alert already sent previously.")
+            continue
+
+        if previous_unreachable:
+            logger.info(f"[{target['name']}] Website is reachable again. Sending recovery notification.")
+            recovery_message = (
+                "<b>Site tekrar erişilebilir!</b>\n\n"
+                f"{target['name']} yeniden kontrol edilebiliyor.\n"
+                f"URL: <a href='{target['url']}'>{target['url']}</a>"
+            )
+            notified = Notifier.notify(Config, recovery_message, click_url=target["url"])
+            if notified:
+                logger.info(f"Recovery alert sent for {target['name']}. Resetting reachability state.")
+                save_state(target["key"], site_unreachable=False)
+            else:
+                logger.error(f"Failed to send recovery alert for {target['name']}. Will retry next time.")
+
+        tickets_available = target["check_fn"](html)
         
         if tickets_available:
             if not previous_status:
