@@ -37,6 +37,7 @@ class Config:
         CHECK_INTERVAL_SECONDS = 300
 
     STATE_FILE_PATH = os.getenv("STATE_FILE_PATH", "state.json")
+    LOG_FILE_PATH = os.getenv("LOG_FILE_PATH", "monitor.log")
 
     # Telegram Bot configurations
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")

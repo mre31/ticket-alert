@@ -11,12 +11,16 @@ from config import Config
 from notifier import Notifier
 
 # Configure Logging
+log_dir = os.path.dirname(Config.LOG_FILE_PATH)
+if log_dir:
+    os.makedirs(log_dir, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("monitor.log", encoding="utf-8")
+        logging.FileHandler(Config.LOG_FILE_PATH, encoding="utf-8")
     ],
     force=True
 )
